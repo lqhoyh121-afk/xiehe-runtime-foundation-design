@@ -27,3 +27,11 @@
 历史验收基线：输入43项、权威/迁移150项是本地合成测试，不是生产或完整独立审阅。架构仍DRAFT；缺P1/P2完整权威及双方冻结时禁止核心实现。签发者策略、分布式权威切换、远程停止真实性和生产Adapter均未验证。
 
 总负责人lqhoyh121-afk批准合并/发布。首个协作试点仅文档链接检查，不改业务或规则；试点PR检查和审阅后等待负责人批准，再扩大并行。
+
+## 执行入口（只做导航，不复制状态）
+- [协作试点 #1](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/1)
+- [G0 #2](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/2)、[G1 #3](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/3)、[G2 #4](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/4)、[G3 #5](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/5)。
+- [GA #6](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/6)、[GA-V #7](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/7)、[G4 #8](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/8)、[G5 #9](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/9)。
+- [G5-K1 #10](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/10)、[G5-K2 #11](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/11)、[G6 #12](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/12)、[G6-S1 #13](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/13)。
+- [G7 #14](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/14)、[G8 #15](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/15)、[G9 #16](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/16)、[G10 #17](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/17)。
+- [实际保护规则与局限](docs/collaboration/GOVERNANCE.md)。Issue记录细化/认领/验收，PR记录测试和审阅；历史tickets不再勾选。
