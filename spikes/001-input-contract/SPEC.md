@@ -8,6 +8,7 @@
 ## 范围和验收
 - 实际读取合成xlsx和只读SQLite，得到等价的标准事实与判定，保留不同来源。
 - 缺字段、未知对象、重复对象、类型/单位错误、日期无时区、过期或未来时间拒绝整批输入，不交给处理器。
+- 本SPIKE仅支持record_schema.properties的直接属性描述符为对象；布尔描述符虽是合法JSON Schema形式，但不在本片段支持子集内，须在读取来源前以MODEL_INVALID拒绝。对象描述符仍按既有Schema规则验证，不扩展任意模型能力。
 - 绑定模型版本/摘要、对象目录摘要及带明确范围的来源摘要，保存不可覆写快照。Excel绑定本次读取的文件字节（file_bytes）；SQLite绑定本次所选行的规范化JSON（selected_rows），不声称覆盖整个数据库文件或其余表。版本不兼容或快照损坏拒绝。
 - 一个合成读数判定夹具：DEMO-ASSET-A读数5为WITHIN_LIMIT，DEMO-ASSET-B读数15为OVER_LIMIT；阈值10只用于测试，不代表任何生产规则。
 - 真实入口：python demo.py --output-dir <新的输出目录>；也提供cli.py单次读取入口。

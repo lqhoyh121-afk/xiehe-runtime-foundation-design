@@ -177,6 +177,8 @@ def load_snapshot(model_path, objects_path, source, expected_model_ref, now):
     schema = model['record_schema']
     if not isinstance(schema, dict) or schema.get('type') != 'object' or not isinstance(schema.get('properties'), dict):
         raise ContractError('MODEL_INVALID')
+    if not all(isinstance(descriptor, dict) for descriptor in schema['properties'].values()):
+        raise ContractError('MODEL_INVALID')
     if not isinstance(source.mapping, dict) or not all(isinstance(v, str) for v in source.mapping.values()):
         raise ContractError('MAPPING_MISMATCH')
     def forbid_refs(value):
