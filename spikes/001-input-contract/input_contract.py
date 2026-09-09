@@ -47,7 +47,7 @@ def read_json(path):
 
 def timestamp(value):
     if not isinstance(value, str) or not re.fullmatch(
-        r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?', value
+        r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)?', value
     ):
         raise ContractError('INVALID_TIME')
     try:
@@ -176,6 +176,8 @@ def load_snapshot(model_path, objects_path, source, expected_model_ref, now):
         raise ContractError('MODEL_INVALID')
     schema = model['record_schema']
     if not isinstance(schema, dict) or schema.get('type') != 'object' or not isinstance(schema.get('properties'), dict):
+        raise ContractError('MODEL_INVALID')
+    if not all(isinstance(descriptor, dict) for descriptor in schema['properties'].values()):
         raise ContractError('MODEL_INVALID')
     if not isinstance(source.mapping, dict) or not all(isinstance(v, str) for v in source.mapping.values()):
         raise ContractError('MAPPING_MISMATCH')
