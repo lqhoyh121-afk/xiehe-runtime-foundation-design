@@ -1,0 +1,286 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:runtime-foundation:migration-contract:0.1-draft",
+  "title": "AC-3 DRAFT SYNTHETIC local migration checks",
+  "$comment": "Local registry resolves authority-contract.schema.json; no shared definitions copied, no network retrieval or production approval.",
+  "$defs": {
+    "MigrationRequest": {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "const": "0.1-draft"
+        },
+        "target_consumption": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/ConsumptionRequest"
+        },
+        "source_grant_ref": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/AuthorityRef"
+        },
+        "checkpoint_ref": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/AuthorityRef"
+        }
+      },
+      "required": [
+        "contract_version",
+        "target_consumption",
+        "source_grant_ref",
+        "checkpoint_ref"
+      ],
+      "additionalProperties": false
+    },
+    "Checkpoint": {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "const": "0.1-draft"
+        },
+        "scope": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Scope"
+        },
+        "instance_id": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Id"
+        },
+        "namespace": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Id"
+        },
+        "consumption_scope": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Id"
+        },
+        "epoch": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Id"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source_deployment_id": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Id"
+        },
+        "source_grant_ref": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/AuthorityRef"
+        },
+        "ref": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/AuthorityRef"
+        },
+        "control_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Timestamp"
+        },
+        "projection_digest": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Digest"
+        },
+        "admission_ref": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/AuthorityRef"
+        },
+        "data_evidence": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/EvidenceRef"
+        },
+        "dedup_evidence": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/EvidenceRef"
+        },
+        "required_capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Id"
+          },
+          "uniqueItems": true,
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "contract_version",
+        "scope",
+        "instance_id",
+        "namespace",
+        "consumption_scope",
+        "epoch",
+        "generation",
+        "source_deployment_id",
+        "source_grant_ref",
+        "ref",
+        "control_revision",
+        "created_at",
+        "projection_digest",
+        "admission_ref",
+        "data_evidence",
+        "dedup_evidence",
+        "required_capabilities"
+      ],
+      "additionalProperties": false
+    },
+    "StopProof": {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "const": "0.1-draft"
+        },
+        "scope": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Scope"
+        },
+        "instance_id": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Id"
+        },
+        "namespace": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Id"
+        },
+        "consumption_scope": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Id"
+        },
+        "epoch": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Id"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source_deployment_id": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Id"
+        },
+        "source_grant_ref": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/AuthorityRef"
+        },
+        "ref": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/AuthorityRef"
+        },
+        "checkpoint_ref": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/AuthorityRef"
+        },
+        "state": {
+          "enum": [
+            "STOPPED",
+            "FENCED",
+            "RUNNING",
+            "UNKNOWN"
+          ]
+        },
+        "active_executors": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stopped_at": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Timestamp"
+        },
+        "fence_evidence": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/EvidenceRef"
+        }
+      },
+      "required": [
+        "contract_version",
+        "scope",
+        "instance_id",
+        "namespace",
+        "consumption_scope",
+        "epoch",
+        "generation",
+        "source_deployment_id",
+        "source_grant_ref",
+        "ref",
+        "checkpoint_ref",
+        "state",
+        "active_executors",
+        "stopped_at",
+        "fence_evidence"
+      ],
+      "additionalProperties": false
+    },
+    "MigrationControl": {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "const": "0.1-draft"
+        },
+        "scope": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Scope"
+        },
+        "instance_id": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Id"
+        },
+        "namespace": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Id"
+        },
+        "consumption_scope": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Id"
+        },
+        "epoch": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Id"
+        },
+        "source_grant_ref": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/AuthorityRef"
+        },
+        "checkpoint_ref": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/AuthorityRef"
+        },
+        "stop_proof_ref": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/AuthorityRef"
+        },
+        "target_grant_ref": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/AuthorityRef"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "revocation_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "state": {
+          "enum": [
+            "READY",
+            "UNKNOWN"
+          ]
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "observed_at": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Timestamp"
+        },
+        "valid_until": {
+          "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Timestamp"
+        },
+        "target_capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/Id"
+          },
+          "uniqueItems": true,
+          "maxItems": 256
+        },
+        "target_provider_bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "urn:runtime-foundation:authority-contract:0.1-draft#/$defs/DefinitionRef"
+          },
+          "uniqueItems": true,
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "contract_version",
+        "scope",
+        "instance_id",
+        "namespace",
+        "consumption_scope",
+        "epoch",
+        "source_grant_ref",
+        "checkpoint_ref",
+        "stop_proof_ref",
+        "target_grant_ref",
+        "revision",
+        "revocation_revision",
+        "state",
+        "complete",
+        "observed_at",
+        "valid_until",
+        "target_capabilities",
+        "target_provider_bindings"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$ref": "#/$defs/MigrationRequest"
+}
