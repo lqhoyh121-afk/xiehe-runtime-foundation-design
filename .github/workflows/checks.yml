@@ -16,6 +16,7 @@ jobs:
           python-version: '3.11'
       - run: python -m pip install -r requirements-dev.txt
       - run: python tools/audit_tree.py
+      - run: python -B -m pytest tests/test_collaboration_docs.py -q -p no:cacheprovider
       - run: python -B -m pytest -q -p no:cacheprovider
         working-directory: spikes/001-input-contract
       - run: python -B -m pytest -q -p no:cacheprovider

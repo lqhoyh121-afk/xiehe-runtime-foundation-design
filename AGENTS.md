@@ -1,7 +1,7 @@
 # 协作规则
 署名：Laiqh
 
-先读PROJECT_CONTROL.md，再读GitHub Issue、其依赖及最近PR。Issue是执行状态唯一权威；本地状态文件只是缓存/断点，不自行维护第二份完成率。
+先读[项目总控](PROJECT_CONTROL.md)、[开工说明](docs/collaboration/START.md)及[保护规则](docs/collaboration/GOVERNANCE.md)，再读GitHub Issue、其依赖及最近PR。Issue是执行状态唯一权威；本地状态文件只是缓存/断点，不自行维护第二份完成率。
 
 总负责人：lqhoyh121-afk。Agent负责协调和具体操作，不得自行批准合并、发布、架构冻结或生产写入。首次清理基线提交/推送获本次授权；此后所有修改通过PR，禁止直接推main、强推、rebase/amend改写公共历史。
 
