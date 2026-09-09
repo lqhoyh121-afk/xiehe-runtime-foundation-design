@@ -30,6 +30,8 @@
 
 ## 执行入口（只做导航，不复制状态）
 - [协作试点 #1](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/1)
-- G0/G1/G2/G3：Issues #2/#3/#4/#5；GA/GA-V/G4/G5：#6/#7/#8/#9。
-- G5-K1/G5-K2/G6/G6-S1：#10/#11/#12/#13；G7/G8/G9/G10：#14/#15/#16/#17。
+- [G0 #2](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/2)、[G1 #3](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/3)、[G2 #4](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/4)、[G3 #5](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/5)。
+- [GA #6](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/6)、[GA-V #7](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/7)、[G4 #8](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/8)、[G5 #9](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/9)。
+- [G5-K1 #10](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/10)、[G5-K2 #11](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/11)、[G6 #12](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/12)、[G6-S1 #13](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/13)。
+- [G7 #14](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/14)、[G8 #15](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/15)、[G9 #16](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/16)、[G10 #17](https://github.com/lqhoyh121-afk/xiehe-runtime-foundation-design/issues/17)。
 - [实际保护规则与局限](docs/collaboration/GOVERNANCE.md)。Issue记录细化/认领/验收，PR记录测试和审阅；历史tickets不再勾选。
