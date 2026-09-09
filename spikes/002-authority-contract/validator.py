@@ -92,7 +92,10 @@ def load_json(path):
         result = json.loads(content.decode('utf-8'), object_pairs_hook=pairs, parse_constant=lambda _: (_ for _ in ()).throw(ContractError('CANONICALIZATION_INVALID')))
         canonical_bytes(result)
         return result
-    except (OSError, UnicodeError, json.JSONDecodeError, RecursionError):
+    except ContractError:
+        # Preserve specific codes: ContractError is itself a ValueError.
+        raise
+    except (OSError, UnicodeError, ValueError, RecursionError):
         raise ContractError('INPUT_INVALID') from None
 
 
