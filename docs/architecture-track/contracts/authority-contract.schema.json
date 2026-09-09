@@ -88,6 +88,30 @@
       ],
       "additionalProperties": false
     },
+    "BusinessDefinitionRef": {
+      "$ref": "#/$defs/DefinitionRef",
+      "properties": {"kind": {"const": "business"}}
+    },
+    "RuntimeDefinitionRef": {
+      "$ref": "#/$defs/DefinitionRef",
+      "properties": {"kind": {"const": "runtime"}}
+    },
+    "ModelDefinitionRef": {
+      "$ref": "#/$defs/DefinitionRef",
+      "properties": {"kind": {"const": "model"}}
+    },
+    "RuleDefinitionRef": {
+      "$ref": "#/$defs/DefinitionRef",
+      "properties": {"kind": {"const": "rule"}}
+    },
+    "WaitDefinitionRef": {
+      "$ref": "#/$defs/DefinitionRef",
+      "properties": {"kind": {"const": "wait"}}
+    },
+    "VerificationDefinitionRef": {
+      "$ref": "#/$defs/DefinitionRef",
+      "properties": {"kind": {"const": "verification"}}
+    },
     "ObjectRef": {
       "type": "object",
       "properties": {
@@ -273,10 +297,10 @@
           "$ref": "#/$defs/DefinitionRef"
         },
         "input_contract_ref": {
-          "$ref": "#/$defs/DefinitionRef"
+          "$ref": "#/$defs/ModelDefinitionRef"
         },
         "output_contract_ref": {
-          "$ref": "#/$defs/DefinitionRef"
+          "$ref": "#/$defs/ModelDefinitionRef"
         },
         "data_provider_ref": {
           "$ref": "#/$defs/DefinitionRef"
@@ -285,7 +309,7 @@
           "$ref": "#/$defs/DefinitionRef"
         },
         "rule_ref": {
-          "$ref": "#/$defs/DefinitionRef"
+          "$ref": "#/$defs/RuleDefinitionRef"
         },
         "rule_provider_ref": {
           "$ref": "#/$defs/DefinitionRef"
@@ -293,7 +317,7 @@
         "wait_spec_ref": {
           "anyOf": [
             {
-              "$ref": "#/$defs/DefinitionRef"
+              "$ref": "#/$defs/WaitDefinitionRef"
             },
             {
               "type": "null"
@@ -303,7 +327,7 @@
         "verification_spec_ref": {
           "anyOf": [
             {
-              "$ref": "#/$defs/DefinitionRef"
+              "$ref": "#/$defs/VerificationDefinitionRef"
             },
             {
               "type": "null"
@@ -392,7 +416,23 @@
         "retry_policy",
         "completion"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "completion": {"const": "READBACK_VERIFIED"}
+            },
+            "required": ["completion"]
+          },
+          "then": {
+            "properties": {
+              "verification_spec_ref": {"type": "object"},
+              "readback_provider_ref": {"type": "object"}
+            }
+          }
+        }
+      ]
     },
     "Projection": {
       "type": "object",
@@ -407,10 +447,10 @@
           "$ref": "#/$defs/Scope"
         },
         "business_ref": {
-          "$ref": "#/$defs/DefinitionRef"
+          "$ref": "#/$defs/BusinessDefinitionRef"
         },
         "definition_ref": {
-          "$ref": "#/$defs/DefinitionRef"
+          "$ref": "#/$defs/RuntimeDefinitionRef"
         },
         "dependencies": {
           "type": "array",
