@@ -30,7 +30,7 @@ def main():
         parser = Parser(add_help=False, allow_abbrev=False)
         parser.add_argument('--sandbox', required=True)
         parser.add_argument('operation')
-        fields = ('package', 'materials', 'fixture', 'request', 'manifest', 'case_id', 'scenario')
+        fields = ('package', 'materials', 'fixture', 'request', 'manifest', 'cleanup_digest', 'case_id', 'scenario')
         for name in fields:
             parser.add_argument('--' + name.replace('_', '-'))
         args, extra = parser.parse_known_args()
@@ -40,7 +40,10 @@ def main():
                     'run-once': {'case_id'}, 'snapshot': {'case_id'}, 'events': {'case_id'},
                     'host-cleanup': {'manifest'}, 'host-control': {'scenario'}, 'host-test': {'scenario', 'case_id'}}
         require(not extra and operation in expected, 'CAPABILITY_UNSUPPORTED')
-        require({name for name in fields if getattr(args, name) is not None} == expected[operation], 'INPUT_INVALID')
+        provided = {name for name in fields if getattr(args, name) is not None}
+        required = expected[operation]
+        require(provided == required or (operation == 'host-cleanup' and provided == required | {'cleanup_digest'}),
+                'INPUT_INVALID')
         flags = [x.split('=', 1)[0] for x in sys.argv[1:] if x.startswith('--')]
         require(len(flags) == len(set(flags)), 'INPUT_INVALID')
         host = PackageHost(args.sandbox)
@@ -49,7 +52,7 @@ def main():
             result = install_package(args.package, args.materials, args.sandbox, trusted_plan=trusted_plan(args.fixture))
             response = {'result': result}
         elif operation == 'host-cleanup':
-            response = {'result': host.cleanup(args.manifest)}
+            response = {'result': host.cleanup(args.manifest, args.cleanup_digest)}
         else:
             process_marker = host.start_process()
             if operation == 'install-inspect':

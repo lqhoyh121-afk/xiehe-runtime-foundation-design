@@ -1,12 +1,36 @@
 """Explicit TEST ONLY host for one reviewed normalize package. Laiqh."""
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import replace
+from pathlib import Path
 import json
+import os
+import shutil
 
-from .contract_adapter import digest, fixture_modules, key, load_json, require
+from .contract_adapter import ContractError, digest, fixture_modules, key, load_json, require
 from .package_install import binding_snapshot, verify_installation
 from .store import Store
-from .synthetic_host import Host, START, END, ident, save
+from .synthetic_host import Host, START, END, ident, pid_alive, save
+
+# A separate POSIX lock owner prevents this process (or another thread) closing
+# an unrelated SQLite descriptor from silently releasing our advisory locks.
+# Whole-file record locks overlap SQLite's rollback and WAL shared main-file
+# locks without opening SQLite or creating/checkpointing WAL/SHM files.
+SQLITE_CLEANUP_GUARD = '''import fcntl,json,os,stat,sys
+handles=[]
+try:
+ for path in json.loads(sys.argv[1]):
+  fd=os.open(path,os.O_RDWR|getattr(os,'O_NOFOLLOW',0));handles.append(fd)
+  info=os.fstat(fd)
+  if not stat.S_ISREG(info.st_mode) or info.st_nlink!=1:raise OSError('not a single owned file')
+  fcntl.lockf(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+ print(json.dumps({'ready':True,'pid':os.getpid()}),flush=True)
+ sys.stdin.buffer.read(1)
+except OSError:
+ print(json.dumps({'ready':False,'pid':os.getpid()}),flush=True)
+finally:
+ for fd in reversed(handles):os.close(fd)
+'''
 
 
 def package_state(sandbox_id, projection, materials):
@@ -105,14 +129,156 @@ class PackageHost(Host):
             index[path.name] = sha256(read_plain(path))
             save(index_path, index)
 
-    def cleanup(self, manifest):
+    @contextmanager
+    def cleanup_lock(self):
+        """Hold the Host write lock through checked destruction.
+
+        Host.lock intentionally releases its lock before Host.cleanup removes the
+        directory, because its normal Windows file handle cannot be deleted. This
+        TEST ONLY path uses a delete-share handle instead, so a control command
+        cannot mutate state between the inventory check and rmtree.
+        """
+        from .synthetic_host import safe_path
+        lock_path = safe_path(self.path / 'host/lock')
+        require(lock_path.is_file(), 'HOST_BINDING_MISMATCH')
+        if os.name == 'nt':
+            import ctypes
+            from ctypes import wintypes
+            import msvcrt
+            api = ctypes.WinDLL('kernel32', use_last_error=True)
+            create = api.CreateFileW
+            create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                               wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+            create.restype = wintypes.HANDLE
+            close = api.CloseHandle
+            close.argtypes = [wintypes.HANDLE]
+            close.restype = wintypes.BOOL
+            handle = create(str(lock_path), 0xC0010000, 0x00000005, None, 3, 0, None)
+            if handle == ctypes.c_void_p(-1).value:
+                raise ContractError('IN_PROGRESS') from None
+            try:
+                fd = msvcrt.open_osfhandle(handle, os.O_RDWR | os.O_BINARY)
+            except BaseException:
+                close(handle)
+                raise
+            stream = os.fdopen(fd, 'r+b')
+            try:
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError:
+                stream.close()
+                raise ContractError('IN_PROGRESS') from None
+            try:
+                self.reload()
+                yield stream
+            finally:
+                try:
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                finally:
+                    stream.close()
+            return
+        import fcntl
+        with lock_path.open('r+b') as stream:
+            try:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                raise ContractError('IN_PROGRESS') from None
+            try:
+                self.reload()
+                yield stream
+            finally:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+    @contextmanager
+    def cleanup_storage_guard(self):
+        """Stop SQLite writes before delete; caller must hold cleanup_lock."""
+        from contextlib import ExitStack
+        import stat
+        from .package_install import plain_path
+        paths = []
+        for path in sorted(self.path.rglob('*')):
+            plain_path(path)
+            info = path.lstat()
+            if stat.S_ISDIR(info.st_mode):
+                continue
+            require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1, 'SANDBOX_INVALID')
+            if path != self.path / 'host/lock':
+                paths.append(path)
+        # Host-owned metadata cannot change under cleanup_lock. Read it before
+        # requesting DELETE access: ordinary Python read handles do not opt in
+        # to delete sharing and cannot reopen these files afterwards on Windows.
+        metadata = {'processes': [(p, load_json(p)) for p in
+                                  (self.path / 'observations').glob('process-*.json')]}
+        index_path = self.path / 'host/request-index.json'
+        metadata['requests'] = set(load_json(index_path)) if index_path.exists() else set()
+        with ExitStack() as stack:
+            handles = {}
+            if os.name == 'nt':
+                import ctypes
+                from ctypes import wintypes
+                import msvcrt
+                api = ctypes.WinDLL('kernel32', use_last_error=True)
+                create = api.CreateFileW
+                create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                   wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+                create.restype = wintypes.HANDLE
+                close = api.CloseHandle
+                close.argtypes = [wintypes.HANDLE]
+                close.restype = wintypes.BOOL
+                for path in paths:
+                    # Request DELETE access too: a pre-existing read-only handle
+                    # may allow reads but deny deletion. Detect it now, not after
+                    # rmtree has already removed the other owned files.
+                    handle = create(str(path), 0x80010000, 0x00000005, None, 3, 0, None)
+                    if handle == ctypes.c_void_p(-1).value:
+                        raise ContractError('IN_PROGRESS') from None
+                    try:
+                        fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+                    except BaseException:
+                        close(handle)
+                        raise
+                    handles[path] = stack.enter_context(os.fdopen(fd, 'rb'))
+                yield {'handles': handles, 'process': None, **metadata}
+                return
+            import selectors
+            import subprocess
+            import sys
+            databases = [str(p) for p in paths if p.name.endswith(('.sqlite', '.sqlite-wal', '.sqlite-shm'))]
+            guard = subprocess.Popen([sys.executable, '-B', '-c', SQLITE_CLEANUP_GUARD, json.dumps(databases)],
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                with selectors.DefaultSelector() as selector:
+                    selector.register(guard.stdout, selectors.EVENT_READ)
+                    require(bool(selector.select(timeout=10)), 'IN_PROGRESS')
+                ready = json.loads(guard.stdout.readline(2048))
+                require(ready.get('ready') is True and ready.get('pid') == guard.pid and guard.poll() is None,
+                        'IN_PROGRESS')
+                yield {'handles': handles, 'process': guard, **metadata}
+            finally:
+                guard.stdin.close()
+                try:
+                    guard.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    guard.kill()
+                    guard.wait(timeout=5)
+                guard.stdout.close()
+                guard.stderr.close()
+
+    def cleanup(self, manifest, cleanup_digest=None):
         import re
         from .package_install import MATERIALS_FILES, PACKAGE_FILES, plain_path, read_plain, sha256
         from .synthetic_host import safe_path
         require(safe_path(manifest) == self.path / 'manifest.json', 'SANDBOX_INVALID')
-        with self.lock():
-            index_path = self.path / 'host/request-index.json'
-            requests = set(load_json(index_path)) if index_path.exists() else set()
+        # Legacy non-archival callers remain supported. Evidence callers supply
+        # their frozen digest; absence is never accepted by the evidence ledger.
+        require(cleanup_digest is None or (type(cleanup_digest) is str and len(cleanup_digest) == 64 and
+                all(c in '0123456789abcdef' for c in cleanup_digest)), 'INPUT_INVALID')
+        with self.cleanup_lock() as lock_handle, self.cleanup_storage_guard() as guard:
+            for process, state in guard['processes']:
+                safe_path(process)
+                require(not pid_alive(state['pid']), 'IN_PROGRESS')
+            requests = guard['requests']
             allowed = {'manifest.json', 'host/state.json', 'host/lock', 'host/installation.json',
                        'host/install-receipt.json', 'host/request-index.json', 'requests/register.json',
                        'requests/register-variant.json', 'observations/install-pending.json',
@@ -130,11 +296,31 @@ class PackageHost(Host):
                 known_generated = re.fullmatch(r'(?:host/(?:intent-case-|output-|execution-output-)|observations/process-session-)[0-9a-f]{32}\.json', name)
                 require(name in allowed or known_generated is not None, 'SANDBOX_INVALID')
                 if name != 'host/lock':
-                    inventory[name] = sha256(read_plain(path, maximum=32_000_000))
-        # Windows byte-range locking forbids reading the lock byte via another handle.
-        inventory['host/lock'] = sha256(read_plain(self.path / 'host/lock'))
-        removed = super().cleanup(manifest)
-        return {**removed, 'cleanup_manifest': {'path': str(self.path), 'files_sha256': inventory}}
+                    if os.name == 'nt':
+                        require(path in guard['handles'], 'CLEANUP_SNAPSHOT_MISMATCH')
+                        stream = guard['handles'][path]
+                        stream.seek(0)
+                        content = stream.read(32_000_001)
+                        require(len(content) <= 32_000_000, 'SANDBOX_INVALID')
+                    else:
+                        content = read_plain(path, maximum=32_000_000)
+                    inventory[name] = sha256(content)
+            # Read through the lock-owning handle. On Windows a second handle can
+            # be rejected by the byte-range lock even in this same process.
+            lock_handle.seek(0)
+            inventory['host/lock'] = sha256(lock_handle.read())
+            actual_digest = digest(inventory)['value']
+            require(cleanup_digest is None or actual_digest == cleanup_digest, 'CLEANUP_SNAPSHOT_MISMATCH')
+            for parent, dirs, files in os.walk(self.path, followlinks=False):
+                for name in dirs + files:
+                    safe_path(Path(parent) / name)
+            require(set(p.name for p in self.path.iterdir()) <= {'manifest.json', 'host', 'runtime', 'requests', 'observations'},
+                    'SANDBOX_INVALID')
+            require(guard['process'] is None or guard['process'].poll() is None, 'IN_PROGRESS')
+            shutil.rmtree(self.path)
+            require(not self.path.exists(), 'STORAGE_INVALID')
+        return {'removed': True, 'cleanup_manifest': {'path': str(self.path), 'files_sha256': inventory},
+                'cleanup_digest': actual_digest, 'storage_guarded': True}
 
     @property
     def reader(self):

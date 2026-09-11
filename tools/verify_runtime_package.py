@@ -151,10 +151,30 @@ class Acceptance:
         return payload
 
     def call(self, h, *args, code=0, env=None, cwd=None):
-        snapshot = self.audit.export(self.root) if self.audit and args and args[0] in ('host-cleanup', 'install-remove') else None
-        result = self.command([sys.executable, '-B', CLI, '--sandbox', h['path'], *args], code, env=env, cwd=cwd)
-        if snapshot:
-            self.audit.cli_cleanup_receipt(h['path'], snapshot, self.commands[-1])
+        from contextlib import nullcontext
+        window = (self.audit.cleanup_window(self.root, delegated_sqlite=True) if self.audit and args and
+                  args[0] in ('host-cleanup', 'install-remove') else nullcontext())
+        with window as snapshot:
+            cli_args = list(args)
+            if snapshot is not None and args[0] == 'host-cleanup':
+                cli_args.extend(('--cleanup-digest', self.audit.cleanup_digest(snapshot, h['path'])))
+            if self.audit and args and args[0] == 'install':
+                self.audit.bind_creation([h['path'], h['path'].with_name(h['path'].name + '.pending')],
+                    [sys.executable, '-B', CLI, '--sandbox', h['path'], *cli_args])
+            result = self.command([sys.executable, '-B', CLI, '--sandbox', h['path'], *cli_args], code, env=env, cwd=cwd)
+            if self.audit and args and args[0] == 'install':
+                self.audit.attach_creation_command(self.commands[-1])
+            if (self.audit and args and args[0] == 'install' and self.commands[-1]['exit_code'] == 0 and
+                    self.audit.creation_command(h['path'], self.commands[-1])):
+                pending = h['path'].with_name(h['path'].name + '.pending')
+                if any(row['path'] == str(pending) for row in self.audit.data['roots']):
+                    self.audit.record_activation(pending, h['path'], self.commands[-1])
+            if snapshot is not None and self.commands[-1]['exit_code'] == 0:
+                self.audit.cli_cleanup_receipt(h['path'], snapshot, self.commands[-1])
+            elif snapshot is not None:
+                self.audit.data['failures'].append({'phase': 'cleanup_command', 'root': str(h['path']),
+                    'error': 'exit_code=' + str(self.commands[-1]['exit_code']), 'preserved': h['path'].exists()})
+                self.audit.save()
         return result
 
     def generate(self):

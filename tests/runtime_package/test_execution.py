@@ -50,8 +50,9 @@ def test_service_and_worker_use_host_dispatch():
     assert result['result']['status'] == 'SUCCEEDED'
     # create data, claim rule, Worker execution, submit rule/output.
     assert calls == ['echo'] * 4
-    audit.cleanup_api(path, lambda: host.cleanup(host.path / 'manifest.json'),
-                      'Host.cleanup', [host.path / 'manifest.json'])
+    # Dispatch is the subject of this test. The generic audited teardown owns
+    # the Host/SQLite locks; legacy Host.cleanup must not reacquire those locks.
+    audit.remove_tree(path)
     audit.verify()
 
 

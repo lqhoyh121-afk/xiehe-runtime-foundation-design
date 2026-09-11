@@ -9,6 +9,564 @@ ROOT = Path(__file__).resolve().parents[2]
 fixture = runpy.run_path(str(Path(__file__).with_name('fixtures.py')))
 
 
+@pytest.mark.parametrize('damage', ['missing', 'failed', 'wrong_snapshot', 'wrong_root', 'before_export', 'missing_command', 'early_unlock'])
+def test_r26_02_closure_requires_the_actual_ordered_cleanup_receipt(damage):
+    from copy import deepcopy
+    import uuid
+    audit = fixture['EvidenceRun'](purpose='r26-02-receipt-selftest')
+    root = audit.register(ROOT / '.local' / ('r26-receipt-' + uuid.uuid4().hex), purpose='owned receipt test')
+    root.mkdir()
+    (root / 'payload.bin').write_bytes(b'SYNTHETIC receipt binding')
+    audit.remove_tree(root)
+    assert audit.verify()['all_closed']
+    original = deepcopy(audit.data)
+    try:
+        receipt = audit.data['cleanups'][0]
+        if damage == 'missing':
+            audit.data['cleanups'].clear()
+        elif damage == 'failed':
+            receipt['succeeded'] = False
+        elif damage == 'wrong_snapshot':
+            receipt['snapshot_id'] = 'missing-snapshot'
+        elif damage == 'wrong_root':
+            receipt['path'] = str(audit.path)
+        elif damage == 'before_export':
+            receipt['started_epoch'] = 0
+        elif damage == 'missing_command':
+            audit.data['commands'].clear()
+        elif damage == 'early_unlock':
+            snapshot = next(s for s in audit.data['snapshots'] if s['id'] == receipt['snapshot_id'])
+            snapshot['cleanup_barrier']['released_epoch'] = receipt['started_epoch'] - 1
+        with pytest.raises(AssertionError):
+            audit.verify()
+        assert audit.data['verification']['all_closed'] is False
+    finally:
+        audit.data = original
+        audit.save()
+        assert audit.verify()['all_closed']
+
+
+@pytest.mark.parametrize('damage', ['sqlite_readback', 'sqlite_observer', 'preceding_snapshot'])
+def test_r26_02_snapshot_evidence_must_bind_raw_archive_to_logical_readback(damage):
+    from copy import deepcopy
+    import sqlite3
+    import uuid
+    audit = fixture['EvidenceRun'](purpose='r26-02-snapshot-binding')
+    root = audit.register(ROOT / '.local' / ('r26-snapshot-' + uuid.uuid4().hex), purpose='owned snapshot test')
+    root.mkdir()
+    db = sqlite3.connect(root / 'sample.sqlite')
+    try:
+        db.execute('CREATE TABLE sample(value TEXT)')
+        db.execute("INSERT INTO sample VALUES ('SYNTHETIC archive binding')")
+        db.commit()
+    finally:
+        db.close()
+    audit.remove_tree(root)
+    assert audit.verify()['all_closed']
+    original = deepcopy(audit.data)
+    try:
+        snapshot = audit.data['snapshots'][-1]
+        if damage == 'sqlite_readback':
+            snapshot['sqlite_readback'] = {}
+        elif damage == 'sqlite_observer':
+            snapshot.pop('sqlite_observer')
+        else:
+            snapshot.pop('preceding_snapshot_id')
+        with pytest.raises(AssertionError):
+            audit.verify()
+        assert audit.data['verification']['all_closed'] is False
+    finally:
+        audit.data = original
+        audit.save()
+        assert audit.verify()['all_closed']
+
+
+@pytest.mark.parametrize('damage', ['exit', 'running', 'raw', 'pid', 'argv'])
+def test_r26_02_cleanup_requires_a_bound_successful_observer(damage):
+    from copy import deepcopy
+    import uuid
+    audit = fixture['EvidenceRun'](purpose='r26-02-observer-binding')
+    root = audit.register(ROOT / '.local' / ('r26-observer-' + uuid.uuid4().hex), purpose='observer binding')
+    root.mkdir()
+    (root / 'payload.bin').write_bytes(b'SYNTHETIC observer binding')
+    audit.remove_tree(root)
+    original = deepcopy(audit.data)
+    started = audit.data['cleanups'][0]['post_observation']['receipt']['started_epoch']
+
+    def damage_all_copies(value):
+        if isinstance(value, dict):
+            if 'argv' in value and value.get('started_epoch') == started:
+                if damage == 'exit':
+                    value['exit_code'] = 99
+                elif damage == 'running':
+                    value['exited'] = False
+                elif damage == 'raw':
+                    value['stdout_raw_hex'] = ''
+                elif damage == 'pid':
+                    value['runtime_pid'] = -1
+                else:
+                    value['argv'][3] = 'print("not the path observer")'
+            for child in value.values():
+                damage_all_copies(child)
+        elif isinstance(value, list):
+            for child in value:
+                damage_all_copies(child)
+
+    try:
+        damage_all_copies(audit.data)
+        with pytest.raises(AssertionError):
+            audit.verify()
+    finally:
+        audit.data = original
+        audit.save()
+        assert audit.verify()['all_closed']
+
+
+def test_r26_02_cli_receipt_binds_entrypoint_manifest_digest_and_result():
+    from copy import deepcopy
+    g = fixture['Generated']()
+    try:
+        g.setup()
+        g.cleanup()
+        audit = g.audit
+        original = deepcopy(audit.data)
+        for damage in ('entrypoint', 'manifest', 'cleanup_digest', 'returned_manifest', 'returned_digest'):
+            audit.data = deepcopy(original)
+            receipt = next(row for row in audit.data['cleanups'] if row['kind'] == 'cli')
+            command = receipt['command']
+            if damage == 'entrypoint':
+                command['argv'][2] = str(ROOT / 'tools/verify_runtime_package.py')
+            elif damage == 'manifest':
+                command['argv'][command['argv'].index('--manifest') + 1] = str(audit.path / 'wrong.json')
+            elif damage == 'cleanup_digest':
+                command['argv'][command['argv'].index('--cleanup-digest') + 1] = '0' * 64
+            else:
+                result = json.loads(command['stdout'])
+                if damage == 'returned_manifest':
+                    result['result']['cleanup_manifest']['files_sha256'] = {}
+                else:
+                    result['result']['cleanup_digest'] = '0' * 64
+                command['stdout'] = json.dumps(result)
+                command['stdout_raw_hex'] = command['stdout'].encode('utf-8').hex()
+            with pytest.raises(AssertionError):
+                audit.verify()
+            assert audit.data['verification']['all_closed'] is False
+        audit.data = original
+        audit.save()
+        assert audit.verify()['all_closed']
+    finally:
+        if g.root.exists():
+            g.audit.remove_tree(g.root)
+
+
+def test_r26_01_write_after_export_preserves_scene(monkeypatch):
+    import sqlite3
+    import uuid
+    audit = fixture['EvidenceRun'](purpose='r26-01-export-gap')
+    root = audit.register(ROOT / '.local' / ('r26-gap-' + uuid.uuid4().hex), purpose='owned SQLite race')
+    root.mkdir()
+    with sqlite3.connect(root / 'sample.sqlite') as db:
+        db.execute('CREATE TABLE sample(value INTEGER)')
+        db.execute('INSERT INTO sample VALUES (1)')
+    db.close()
+    export = audit.export
+    calls = []
+
+    def write_after_first_export(path):
+        snapshot = export(path)
+        if not calls:
+            calls.append(snapshot['id'])
+            command = audit.process([sys.executable, '-B', '-c',
+                'import sqlite3,sys;db=sqlite3.connect(sys.argv[1]);db.execute("INSERT INTO sample VALUES (2)");db.commit();db.close()',
+                root / 'sample.sqlite'])
+            assert command['exit_code'] == 0
+        return snapshot
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(audit, 'export', write_after_first_export)
+            with pytest.raises(ValueError, match='SNAPSHOT_CHANGED_BEFORE_CLEANUP'):
+                audit.remove_tree(root)
+        assert root.exists() and not audit.data['cleanups']
+        with sqlite3.connect(root / 'sample.sqlite') as db:
+            assert db.execute('SELECT value FROM sample ORDER BY value').fetchall() == [(1,), (2,)]
+        db.close()
+        assert audit.data['snapshots'][0]['sqlite_readback']['sample.sqlite']['tables']['sample'] == [{'value': 1}]
+    finally:
+        if root.exists():
+            audit.remove_tree(root)
+        assert audit.verify()['all_closed']
+
+
+@pytest.mark.parametrize('journal', ['DELETE', 'WAL'])
+def test_r26_01_late_sqlite_writer_is_blocked_until_removal(journal):
+    import shutil
+    import sqlite3
+    import uuid
+    audit = fixture['EvidenceRun'](purpose='r26-01-late-writer')
+    root = audit.register(ROOT / '.local' / ('r26-late-' + uuid.uuid4().hex), purpose='owned late writer')
+    root.mkdir()
+    with sqlite3.connect(root / 'sample.sqlite') as db:
+        db.execute('PRAGMA journal_mode=' + journal)
+        db.execute('CREATE TABLE sample(value INTEGER)')
+        db.execute('INSERT INTO sample VALUES (1)')
+    db.close()
+    probe = '''import json,sqlite3,sys
+db=None
+try:
+ db=sqlite3.connect(sys.argv[1],timeout=0)
+ db.execute('INSERT INTO sample VALUES (?)',(int(sys.argv[2]),));db.commit()
+ result={'blocked':False}
+except sqlite3.OperationalError as exc:
+ result={'blocked':True,'reason':str(exc)}
+finally:
+ if db is not None:db.close()
+print(json.dumps(result))
+'''
+    # The same real process can write when no barrier is held.
+    allowed = audit.process([sys.executable, '-B', '-c', probe, root / 'sample.sqlite', '2'])
+    assert allowed['exit_code'] == 0 and json.loads(allowed['stdout'])['blocked'] is False
+
+    try:
+        with audit.cleanup_window(root) as snapshot:
+            denied = audit.process([sys.executable, '-B', '-c', probe, root / 'sample.sqlite', '3'])
+            assert denied['exit_code'] == 0 and json.loads(denied['stdout'])['blocked'] is True
+            audit.cleanup_api(root, snapshot=snapshot)
+        assert audit.verify()['all_closed']
+        snapshot = audit.data['snapshots'][-1]
+        assert snapshot['sqlite_readback']['sample.sqlite']['tables']['sample'] == [{'value': 1}, {'value': 2}]
+    finally:
+        if root.exists():
+            audit.remove_tree(root)
+        assert audit.verify()['all_closed']
+
+
+@pytest.mark.parametrize('journal', ['DELETE', 'WAL'])
+def test_r26_01_existing_sqlite_handle_fails_closed_or_is_guarded(journal):
+    import os
+    import shutil
+    import sqlite3
+    import uuid
+    audit = fixture['EvidenceRun'](purpose='r26-01-existing-handle')
+    root = audit.register(ROOT / '.local' / ('r26-existing-' + uuid.uuid4().hex), purpose='owned SQLite handle')
+    root.mkdir()
+    writer = sqlite3.connect(root / 'sample.sqlite')
+    writer.execute('PRAGMA journal_mode=' + journal)
+    writer.execute('CREATE TABLE sample(value INTEGER)')
+    writer.commit()
+    try:
+        if os.name == 'nt':
+            # SQLite's open handle does not grant delete sharing. The Windows
+            # barrier must preserve the root rather than risk a write gap.
+            with pytest.raises(OSError, match='CLEANUP_WRITE_BARRIER_BUSY'):
+                audit.remove_tree(root)
+            assert root.exists() and not audit.data['cleanups']
+            assert audit.data['failures'][-1]['preserved'] is True
+            writer.close()
+            writer = None
+            audit.remove_tree(root)
+        else:
+            # The already-open connection itself must be unable to write while
+            # the audit's BEGIN IMMEDIATE barrier remains held through rmtree.
+            with audit.cleanup_window(root) as snapshot:
+                with pytest.raises(sqlite3.OperationalError, match='locked'):
+                    writer.execute('INSERT INTO sample VALUES (1)')
+                    writer.commit()
+                audit.cleanup_api(root, snapshot=snapshot)
+            writer.close()
+            writer = None
+        assert audit.verify()['all_closed']
+    finally:
+        if writer is not None:
+            writer.close()
+        if root.exists():
+            audit.remove_tree(root)
+        assert audit.verify()['all_closed']
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='requires POSIX unlink semantics for a live WAL reader')
+def test_r26_01_nonempty_wal_is_archived_and_read_back_before_removal():
+    import sqlite3
+    import uuid
+    audit = fixture['EvidenceRun'](purpose='r26-01-nonempty-wal')
+    root = audit.register(ROOT / '.local' / ('r26-wal-' + uuid.uuid4().hex), purpose='owned nonempty WAL')
+    root.mkdir()
+    writer = sqlite3.connect(root / 'sample.sqlite')
+    reader = None
+    try:
+        writer.execute('PRAGMA journal_mode=WAL')
+        writer.execute('CREATE TABLE sample(value INTEGER)')
+        writer.execute('INSERT INTO sample VALUES (1)')
+        writer.commit()
+        reader = sqlite3.connect(root / 'sample.sqlite')
+        reader.execute('BEGIN')
+        assert reader.execute('SELECT value FROM sample').fetchall() == [(1,)]
+        writer.execute('INSERT INTO sample VALUES (2)')
+        writer.commit()
+        assert (root / 'sample.sqlite-wal').stat().st_size > 0
+        writer.close()
+        writer = None
+        audit.remove_tree(root)
+    finally:
+        if reader is not None:
+            reader.close()
+        if writer is not None:
+            writer.close()
+        if root.exists():
+            audit.remove_tree(root)
+    snapshot = audit.data['snapshots'][-1]
+    assert snapshot['files']['sample.sqlite-wal']['size'] > 0
+    assert snapshot['sqlite_readback']['sample.sqlite']['tables']['sample'] == [{'value': 1}, {'value': 2}]
+    assert audit.verify()['all_closed']
+
+
+@pytest.mark.parametrize('journal', ['DELETE', 'WAL'])
+def test_r26_01_direct_host_cleanup_blocks_writer_at_destruction(monkeypatch, journal):
+    import shutil
+    import sqlite3
+    from runtime_core.package_host import PackageHost
+    g = fixture['Generated']()
+    class AtDestruction(Exception):
+        pass
+    probe = '''import json,sqlite3,sys
+db=None
+try:
+ db=sqlite3.connect(sys.argv[1],timeout=0)
+ db.execute('INSERT INTO r26_probe VALUES (2)');db.commit()
+ print(json.dumps({'blocked':False}))
+except sqlite3.OperationalError:
+ print(json.dumps({'blocked':True}))
+finally:
+ if db is not None:db.close()
+'''
+    try:
+        g.setup()
+        db = sqlite3.connect(g.sandbox / 'runtime/runtime.sqlite')
+        db.execute('PRAGMA journal_mode=' + journal)
+        db.execute('CREATE TABLE r26_probe(value INTEGER)')
+        db.commit()
+        db.close()
+        allowed = g.audit.process([sys.executable, '-B', '-c', probe, g.sandbox / 'runtime/runtime.sqlite'])
+        assert allowed['exit_code'] == 0 and json.loads(allowed['stdout'])['blocked'] is False
+        expected = fixture['digest'](fixture['hashes'](g.sandbox))['value']
+
+        def before_delete(path):
+            assert Path(path) == g.sandbox
+            denied = g.audit.process([sys.executable, '-B', '-c', probe, g.sandbox / 'runtime/runtime.sqlite'])
+            assert denied['exit_code'] == 0 and json.loads(denied['stdout'])['blocked'] is True
+            raise AtDestruction()
+
+        with monkeypatch.context() as patch:
+            patch.setattr(shutil, 'rmtree', before_delete)
+            with pytest.raises(AtDestruction):
+                # No EvidenceRun barrier wraps this product API invocation.
+                PackageHost(g.sandbox).cleanup(g.sandbox / 'manifest.json', expected)
+        assert g.sandbox.exists()
+    finally:
+        g.cleanup()
+
+
+@pytest.mark.parametrize('journal', ['DELETE', 'WAL'])
+@pytest.mark.parametrize('readonly', [False, True])
+def test_r26_01_direct_host_cleanup_preserves_active_reader(monkeypatch, journal, readonly):
+    import shutil
+    import sqlite3
+    from runtime_core.package_host import PackageHost
+    from runtime_core.contract_adapter import ContractError
+    g = fixture['Generated']()
+    reader = None
+    try:
+        g.setup()
+        db_path = g.sandbox / 'runtime/runtime.sqlite'
+        prepare = sqlite3.connect(db_path)
+        prepare.execute('PRAGMA journal_mode=' + journal)
+        prepare.close()
+        reader = sqlite3.connect(db_path.as_uri() + ('?mode=ro' if readonly else '?mode=rw'), uri=True)
+        reader.execute('BEGIN')
+        reader.execute('SELECT name FROM sqlite_master').fetchall()
+        before = sorted(str(p.relative_to(g.sandbox)) for p in g.sandbox.rglob('*'))
+        with monkeypatch.context() as patch:
+            patch.setattr(shutil, 'rmtree', lambda path: pytest.fail('destruction reached with a live SQLite reader'))
+            with pytest.raises(ContractError) as blocked:
+                PackageHost(g.sandbox).cleanup(g.sandbox / 'manifest.json')
+            assert blocked.value.code == 'IN_PROGRESS'
+        assert sorted(str(p.relative_to(g.sandbox)) for p in g.sandbox.rglob('*')) == before
+    finally:
+        if reader is not None:
+            reader.close()
+        g.cleanup()
+
+
+def test_r26_01_host_cleanup_rechecks_the_archived_host_state():
+    import os
+    g = fixture['Generated']()
+    try:
+        g.setup()
+        with g.before_cleanup() as snapshot:
+            expected = g.audit.cleanup_digest(snapshot, g.sandbox)
+            if os.name == 'nt':
+                # The audit's Windows deny-write barrier blocks Host.control
+                # before it can replace state.json. Preservation is the safe
+                # outcome for this platform-specific overlap.
+                denied = g.cli('host-control', '--scenario', 'input-alternate', expected=4)
+                assert denied['code'] == 'STORAGE_INVALID'
+                assert g.sandbox.exists()
+                return
+            controlled = g.cli('host-control', '--scenario', 'input-alternate')
+            assert controlled['result']['scenario'] == 'input-alternate'
+            rejected = g.run([sys.executable, '-B', ROOT / 'tools/runtime_package_cli.py',
+                              '--sandbox', g.sandbox, 'host-cleanup', '--manifest', g.sandbox / 'manifest.json',
+                              '--cleanup-digest', expected], expected=2)
+            assert rejected['code'] == 'CLEANUP_SNAPSHOT_MISMATCH'
+            assert g.sandbox.exists()
+    finally:
+        # A deliberately failed Windows control can leave its atomic-save temp
+        # file behind. Archive that synthetic scene before removing it rather
+        # than asking product cleanup to discard the unarchived residue.
+        if g.root.exists():
+            g.audit.remove_tree(g.root)
+        assert g.audit.verify()['all_closed']
+
+
+def test_r26_01_host_cleanup_requires_exact_snapshot_digest():
+    with fixture['generated']() as g:
+        g.setup()
+        with g.before_cleanup() as snapshot:
+            rejected = g.run([sys.executable, '-B', ROOT / 'tools/runtime_package_cli.py',
+                              '--sandbox', g.sandbox, 'host-cleanup', '--manifest', g.sandbox / 'manifest.json',
+                              '--cleanup-digest', '0' * 64], expected=2)
+            assert rejected['code'] == 'CLEANUP_SNAPSHOT_MISMATCH'
+            assert g.sandbox.exists()
+
+
+def test_r26_02_api_cleanup_rejects_a_callback_that_did_not_remove_root():
+    import uuid
+    audit = fixture['EvidenceRun'](purpose='r26-02-api-postcondition')
+    root = audit.register(ROOT / '.local' / ('r26-api-post-' + uuid.uuid4().hex), purpose='must actually remove root')
+    root.mkdir()
+    (root / 'payload.bin').write_bytes(b'SYNTHETIC postcondition')
+    try:
+        with pytest.raises(TypeError):
+            audit.cleanup_api(root, lambda: None, 'shutil.rmtree', [root])
+        assert root.exists() and not audit.data['cleanups']
+    finally:
+        if root.exists():
+            audit.remove_tree(root)
+        assert audit.verify()['all_closed']
+
+
+@pytest.mark.parametrize('successful', [False, True])
+def test_r26_02_late_install_cannot_close_a_previously_lost_root(successful):
+    import shutil
+    g = fixture['Generated']()
+    try:
+        g.ensure_runtime_roots()
+        pending = g.sandbox.with_name(g.sandbox.name + '.pending')
+        lost = pending if successful else g.sandbox
+        lost.mkdir()
+        (lost / 'lost-synthetic.txt').write_bytes(b'SYNTHETIC deliberately unrecorded content')
+        shutil.rmtree(lost)  # Deliberately violate only this disposable test's lifecycle.
+        g.audit.export(g.root)
+        argv = [sys.executable, '-B', ROOT / 'tools/runtime_package_cli.py', '--sandbox', g.sandbox,
+                'install', '--package', g.package, '--materials', g.materials, '--fixture', 'normalize-l3-v1']
+        with pytest.raises(ValueError, match='CREATION_LIFECYCLE_ALREADY_STARTED'):
+            g.audit.bind_creation([g.sandbox, pending], argv)
+        env = dict(g.env)
+        if not successful:
+            env['WF2_INSTALL_FAULT'] = 'after_snapshot'
+        command = g.audit.process(argv, env=env)
+        assert command['exit_code'] == (0 if successful else 86)
+        with pytest.raises(AssertionError):
+            if successful:
+                g.audit.record_activation(pending, g.sandbox, command)
+            else:
+                g.audit.record_failed_activation(pending, g.sandbox, command)
+    finally:
+        if g.root.exists():
+            g.audit.remove_tree(g.root)
+        with pytest.raises(AssertionError):
+            g.audit.verify()
+        assert not g.audit.data['verification']['all_closed']
+
+
+def test_r26_02_rename_callback_cannot_masquerade_as_rmtree():
+    import os
+    import uuid
+    enclosure = ROOT / '.local' / ('r26-rename-' + uuid.uuid4().hex)
+    enclosure.mkdir()
+    audit = fixture['EvidenceRun'](purpose='r26-rename-is-not-delete', owned_roots=[enclosure])
+    root = audit.register(enclosure / 'root', purpose='must be deleted, not moved')
+    root.mkdir()
+    moved = enclosure / 'moved'
+    try:
+        with pytest.raises(TypeError):
+            audit.cleanup_api(root, lambda: os.rename(root, moved), 'shutil.rmtree', [root])
+        assert root.is_dir() and not moved.exists() and not audit.data['cleanups']
+    finally:
+        if root.exists():
+            audit.remove_tree(root)
+        assert audit.verify()['all_closed']
+        if moved.exists():
+            moved.rmdir()
+        enclosure.rmdir()
+
+
+def test_r26_02_idempotent_install_keeps_the_original_creation_proof():
+    with fixture['generated']() as g:
+        args = ('install', '--package', str(g.package), '--materials', str(g.materials), '--fixture', 'normalize-l3-v1')
+        first = g.cli(*args)
+        first_creator = next(r['creation_intent']['command']['started_epoch'] for r in g.audit.data['roots']
+                             if r['path'] == str(g.sandbox))
+        second = g.cli(*args)
+        assert first['result'] == second['result'] and len(g.audit.data['transitions']) == 1
+        assert g.audit.data['transitions'][0]['command']['started_epoch'] == first_creator
+
+
+def test_r26_02_missing_child_needs_real_transition_evidence():
+    import shutil
+    import uuid
+    audit = fixture['EvidenceRun'](purpose='r26-02-missing-child')
+    root = audit.register(ROOT / '.local' / ('r26-parent-' + uuid.uuid4().hex), purpose='parent')
+    child = audit.register(root / 'child', purpose='child', parent=root)
+    root.mkdir()
+    child.mkdir()
+    (child / 'payload.bin').write_bytes(b'SYNTHETIC child evidence that must not disappear')
+    # Simulate a prior unrecorded removal. Parent cleanup must not relabel this as
+    # a harmless unused reservation merely because the child is gone at export.
+    shutil.rmtree(child)
+    audit.remove_tree(root)
+    with pytest.raises(AssertionError):
+        audit.verify()
+    assert str(child) in audit.data['verification']['unclosed_roots']
+    later = audit.process([sys.executable, '-B', ROOT / 'tools/verify_runtime_package.py',
+        '--sandbox', child, '--report', audit.path / 'late.json', '--scenario', 'S02',
+        '--evidence-dir', audit.path.parent])
+    assert later['exit_code'] == 2
+    with pytest.raises(AssertionError, match='INVALID_NONCREATION_PROOF'):
+        audit.record_noncreation(child, later)
+    with pytest.raises(AssertionError):
+        audit.verify()
+    assert str(child) in audit.data['verification']['unclosed_roots']
+
+
+def test_r26_02_unused_reservation_needs_separate_evidence():
+    import uuid
+    audit = fixture['EvidenceRun'](purpose='r26-02-unused-reservation')
+    root = ROOT / '.local' / ('r26-unused-' + uuid.uuid4().hex)
+    argv = [sys.executable, '-B', ROOT / 'tools/verify_runtime_package.py',
+        '--sandbox', root, '--report', audit.path / 'unused.json', '--scenario', 'S02',
+        '--evidence-dir', audit.path.parent]
+    audit.register(root, purpose='never created', creation_argv=argv)
+    with pytest.raises(AssertionError):
+        audit.verify()
+    assert audit.data['verification']['all_closed'] is False
+    command = audit.process(argv)
+    audit.record_noncreation(root, command)
+    assert audit.verify()['all_closed']
+    assert audit.data['roots'][0]['state'] == 'reservation_closed'
+    assert not audit.data['cleanups'] and not root.exists()
+
+
 def test_f01_reference_binding_never_reads_default(monkeypatch):
     """Exercise the original exact-source test, rejecting a default-path fallback."""
     default = ROOT / '.local/reference/l3/package/components/normalize-submission/implementation.py'
@@ -67,6 +625,27 @@ def test_e01_generated_cleanup_captures_identity_and_raw_cli():
     assert cli_cleanup['command']['launcher_pid'] > 0
     assert bytes.fromhex(cli_cleanup['command']['stdout_raw_hex']).decode('utf-8') == cli_cleanup['command']['stdout']
     assert evidence.verify()['all_closed'] and not root.exists()
+
+
+def test_r26_01_legacy_verifier_cleanup_without_export_still_works():
+    import os
+    import uuid
+    audit = fixture['EvidenceRun'](purpose='r26-legacy-verifier-entry')
+    root = audit.register(ROOT / '.local' / ('r26-legacy-verifier-' + uuid.uuid4().hex), purpose='legacy verifier owner')
+    root.mkdir()
+    try:
+        result = audit.process([sys.executable, '-B', ROOT / 'tools/verify_runtime_package.py',
+            '--sandbox', root / 'sandbox', '--report', root / 'report.json', '--scenario', 'S01'],
+            env={**os.environ, 'WF2_REFERENCE_ROOT': str(fixture['REFERENCE']),
+                 'WF2_TOOL_ROOT': str(fixture['TOOL_ROOT'])}, timeout=120)
+        assert result['exit_code'] == 0, result
+        report = fixture['read_json'](root / 'report.json')
+        assert report['all_passed'] and report['covered'] == ['S01']
+        assert report['generation_cleaned'] and all(target['cleaned'] for target in report['targets'])
+    finally:
+        if root.exists():
+            audit.remove_tree(root)
+        assert audit.verify()['all_closed']
 
 
 def test_e01_verifier_has_explicit_bounded_export():
@@ -164,12 +743,15 @@ def test_e01_inconsistent_snapshot_blocks_delete(monkeypatch):
 def test_e01_unsupported_cli_export_rejects_before_any_root():
     import uuid
     audit = fixture['EvidenceRun'](purpose='unsupported-export-selftest')
-    root = audit.register(ROOT / '.local' / ('e01-unsupported-' + uuid.uuid4().hex), purpose='must never be created')
+    root = ROOT / '.local' / ('e01-unsupported-' + uuid.uuid4().hex)
     report = audit.path / 'must-not-exist.json'
-    result = audit.process([sys.executable, '-B', ROOT / 'tools/verify_runtime_package.py',
-        '--sandbox', root, '--report', report, '--scenario', 'S02', '--evidence-dir', audit.path.parent])
+    argv = [sys.executable, '-B', ROOT / 'tools/verify_runtime_package.py',
+        '--sandbox', root, '--report', report, '--scenario', 'S02', '--evidence-dir', audit.path.parent]
+    audit.register(root, purpose='must never be created', creation_argv=argv)
+    result = audit.process(argv)
     assert result['exit_code'] == 2 and 'supports S01 only' in result['stderr']
     assert not root.exists() and not report.exists()
+    audit.record_noncreation(root, result)
     assert audit.verify()['all_closed']
 
 
@@ -177,7 +759,6 @@ def test_e01_legacy_byte_constructor_and_both_raw_streams_still_work(monkeypatch
     import uuid
     audit = fixture['EvidenceRun'](purpose='legacy-byte-compatibility')
     root = audit.register(ROOT / '.local' / ('e01-legacy-' + uuid.uuid4().hex), purpose='legacy constructor owner')
-    audit.register(root / 'sandbox', purpose='legacy byte sandbox', parent=root)
     root.mkdir()
     module = runpy.run_path(str(ROOT / 'tools/verify_runtime_package.py'))
     monkeypatch.setenv('WF2_REFERENCE_ROOT', str(fixture['REFERENCE']))
