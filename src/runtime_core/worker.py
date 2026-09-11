@@ -7,7 +7,7 @@ import time
 from .contract_adapter import require, shape, load_json
 from .service import Service
 from .synthetic_host import ident, save
-from .synthetic_providers import Providers
+
 
 
 class Worker:
@@ -39,7 +39,7 @@ class Worker:
             self.host.control('advance-past-deadline')
         binding = self.service.check_execution(lease)
         # Pure computation runs outside both the SQLite transaction and host lock.
-        output = Providers(self.host, binding['projection']['nodes'][0]).execute(lease['input_snapshot_ref'], binding['object_refs'])
+        output = self.host.providers(binding['projection']['nodes'][0]).execute(lease['input_snapshot_ref'], binding['object_refs'])
         with self.host.lock():
             reference = self.host.stage_output(output, lease)
             payload = {k: deepcopy(lease[k]) for k in ('case_id', 'node_run_id', 'attempt_id', 'lease_token', 'input_snapshot_ref')}
