@@ -211,6 +211,10 @@ class Host:
     def actor(self, role):
         return {'object_type': 'synthetic-actor', 'namespace': 'synthetic', 'id': role, 'scope': deepcopy(self.state['scope'])}
 
+    def providers(self, node):
+        from .synthetic_providers import Providers
+        return Providers(self, node)
+
     def validate(self, binding):
         req = deepcopy(self.state['request'])
         req.update(projection=deepcopy(binding['projection']), admission_ref=deepcopy(binding['admission_ref']), worker_session_id=self.session)

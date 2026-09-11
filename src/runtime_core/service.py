@@ -7,7 +7,7 @@ from datetime import timedelta
 from .contract_adapter import (ContractError, digest, exact, key, request_digest, request_shape, require, shape, timestamp)
 from .store import Store, encode
 from .synthetic_host import ident
-from .synthetic_providers import Providers
+
 
 FIELDS = {
     'register': {'business_ref', 'definition_ref', 'contract_version', 'provider_bindings', 'admission_ref'},
@@ -100,7 +100,7 @@ class Service:
             require(registration['state'] == 'ENABLED', 'BUSINESS_NOT_ENABLED')
             self.host.validate(binding)
             node = binding['projection']['nodes'][0]
-            content = Providers(self.host, node).data(p['input_ref'], p['object_refs'])
+            content = self.host.providers(node).data(p['input_ref'], p['object_refs'])
             cid, nid, bid = ident('case'), ident('node'), ident('binding')
             case_binding = {**deepcopy(binding), 'registration_id': target, 'input_ref': p['input_ref'], 'object_refs': p['object_refs']}
             result = {'case_id': cid, 'revision': 1, 'status': 'QUEUED', 'binding_ref': bid}
@@ -250,7 +250,7 @@ class Service:
                 require(p['outcome'] == 'SUCCEEDED', 'CONTRACT_INVALID')
                 require(p['input_snapshot_ref'] == json.loads(node['input_ref']), 'INPUT_STALE')
             self.host.validate(binding)
-            providers = Providers(self.host, binding['projection']['nodes'][0])
+            providers = self.host.providers(binding['projection']['nodes'][0])
             decision = self.rule(providers, case, node, binding)
             revision = case['revision'] + 1
             if operation == 'claim':
